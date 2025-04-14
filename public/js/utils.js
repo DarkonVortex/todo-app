@@ -17,6 +17,22 @@ export async function redirectIfLoggedIn(redirectUrl = "/dashboard.html") {
   }
 }
 
+export async function redirectIfNotLoggedIn(redirectUrl = "/login.html") {
+    try {
+      const response = await fetch(API_URL_ME, {
+        credentials: "include",
+      });
+  
+      if (!response.ok) {
+        window.location.href = redirectUrl;
+      } else {
+        console.log("response ok");
+      }
+    } catch (error) {
+      console.log("No authentication, cannot stay on this page");
+    }
+  }
+
 export async function logOut() {
   try {
     const response = await fetch(API_URL_LOGOUT, {

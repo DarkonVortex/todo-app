@@ -3,7 +3,7 @@ const loginForm = document.getElementById('registerForm')
 const name = document.getElementById('name')
 const email = document.getElementById('email')
 const password = document.getElementById('password')
-import { redirectIfLoggedIn } from './utils.js'
+import { redirectIfLoggedIn } from '../utils.js'
 
 // Redirect user to dashboard if logged in
 redirectIfLoggedIn()

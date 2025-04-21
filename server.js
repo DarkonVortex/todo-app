@@ -16,5 +16,5 @@ app.use('/api/auth', authRoutes)
 app.use('/api/protected', protectedRoutes)
 app.use('/api/todo', todoRoutes)
 app.listen(3000, () => {
-  console.log('Server running on port 3000')
+  console.log('Server running on port 3000 http://192.168.1.135:3000/')
 })

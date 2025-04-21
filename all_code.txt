@@ -21,7 +21,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/protected', protectedRoutes)
 app.use('/api/todo', todoRoutes)
 app.listen(3000, () => {
-  console.log('Server running on port 3000')
+  console.log('Server running on port 3000 http://192.168.1.135:3000/')
 })
 
 
@@ -130,20 +130,35 @@ exports.logoutUser = async (req, res) => {
 const Todo = require("../models/Todo");
 
 exports.getTodos = async (req, res) => {
-    try {
+  try {
+    const todos = await Todo.find({ user: req.user.userId });
+    res.json(todos);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error });
+  }
+};
 
-    } catch (error) {
-      res.status(500).json({ message: "Server error", error });
-    }
-  };
+exports.createTodo = async (req, res) => {
+  try {
+    const { title, description, dueDate } = req.body;
 
-// exports.createTodo = async (req, res) => {
-//     try {
+    // Create a new todo using Mongoose
+    const newTodo = new Todo({
+      title,
+      description,
+      user: req.user.userId,
+      dueDate,
+    });
 
-//     } catch (error) {
-//         res.status(500).json({ message: 'Server error', error })
-//     }
-// }
+    // Save the todo to the database
+    const savedTodo = await newTodo.save();
+
+    // Send back the created todo
+    res.status(201).json(savedTodo);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error });
+  }
+};
 
 // exports.getTodo = async (req, res) => {
 //     try {
@@ -153,21 +168,61 @@ exports.getTodos = async (req, res) => {
 //     }
 // }
 
-// exports.updateTodo = async (req, res) => {
-//     try {
+exports.updateTodo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, completed, dueDate } = req.body;
+    const todo = await Todo.findById(id);
 
-//     } catch (error) {
-//         res.status(500).json({ message: 'Server error', error })
-//     }
-// }
+    if (!todo) {
+      return res.status(404).json({ message: "Tdodo not found" });
+    }
 
-// exports.deleteTodo = async (req, res) => {
-//     try {
+    if (todo.user.toString() !== req.user.userId) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to update this todo" });
+    }
 
-//     } catch (error) {
-//         res.status(500).json({ message: 'Server error', error })
-//     }
-// }
+    const updatedTodo = await Todo.findByIdAndUpdate(
+      id,
+      {
+        title,
+        description,
+        completed,
+        dueDate,
+      },
+      { new: true }
+    );
+
+    res.json (updatedTodo)
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error });
+  }
+};
+
+exports.deleteTodo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const todo = await Todo.findById(id);
+
+    if (!todo) {
+      return res.status(404).json({ message: "Todo not found" });
+    }
+
+    if (todo.user.toString() !== req.user.userId) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to delete this todo" });
+    }
+
+    await Todo.findByIdAndDelete(id);
+
+    res.json({ message: "Todo deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error });
+  }
+};
 
 
 # --- FILE: C:\Users\zrdar\Documents\todo-app\controllers\userController.js ---
@@ -177,7 +232,6 @@ const User = require("../models/User")
 
 exports.getCurrentUser = async (req, res) => {
     try {
-        console.log('hi')
         const user = await User.findById(req.user.userId).select('-password')
         if (!user) {
             return res.status(404).json({ message: 'User not found' })
@@ -243,6 +297,10 @@ const todoSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
+  },
+  dueDate: {
+    type: Date,
+    required: true
   }
 })
 
@@ -276,20 +334,121 @@ module.exports = mongoose.model('User', userSchema)
 # --- FILE: C:\Users\zrdar\Documents\todo-app\public\js\main.js ---
 
 
-const ulList = document.getElementById('ulList')
-const API_URL_TODO = 'http://192.168.1.135:3000/api/todo/'
-import { fetchTodos } from './todo/fetchTodos.js'
-import { redirectIfNotLoggedIn, logOut } from './utils.js'
+const API_URL_TODO = "http://192.168.1.135:3000/api/todo/";
+import { fetchTodos } from "./todo/fetchTodos.js";
+import { createTodo } from "./todo/createTodo.js";
+import { displayTodos } from "./todo/displayTodos.js";
+import { openMoreVert } from "./todo/openMoreVert.js";
+import { closeSidebarMenu, openSidebar } from "./todo/sidebarFunctions.js";
+import { redirectIfNotLoggedIn, logOut, createTodoInputValidation } from "./utils.js";
+import { updateTodo } from "./todo/updateTodo.js";
 
-redirectIfNotLoggedIn()
+const logOutButton = document.getElementById("logOutButton");
+const closeSidebarButton = document.getElementById("closeSidebarButton");
+const createTodoModal = document.querySelector('[data-id="createModal"]');
+const editTodoModal = document.querySelector('[data-id="editModal"]');
+const createTodoForm = document.querySelectorAll('[data-id="createModalForm"]');
+const closeCreateModalBtn = document.querySelectorAll(
+  '[data-id="createModalClose"]'
+);
+const cancelCreateTodoBtn = document.querySelectorAll(
+  ".create-modal-form-cancel-button"
+);
+let todos = [];
 
-const logOutButton = document.getElementById('logOutButton')
+redirectIfNotLoggedIn();
 
+document.addEventListener("click", (event) => {
+  // Open Modal: Create todo
+  if (event.target && event.target.classList.contains("create-task-button")) {
+    // Set default due time to tomorrow
+    const createModalDueDate = document.querySelector('[data-id="createModalDueDate"]');
+    let tomorrow = new Date();
+    createModalDueDate.value = `${tomorrow.getFullYear()}-0${tomorrow.getMonth() + 1}-${tomorrow.getDate() + 1}T${tomorrow.getHours() + 1}:00`;
+    createModalDueDate.setAttribute('min', `${tomorrow.getFullYear()}-0${tomorrow.getMonth() + 1}-${tomorrow.getDate()}T${tomorrow.getHours()}:${tomorrow.getMinutes()}`);
+    document.querySelector(".create-modal").style.display = "flex";
+    createTodoModal.showModal();
+  }
+
+  // Open Sidebar
+  if (event.target.id == "openSidebarButton") {
+    openSidebar();
+  }
+
+  // Open the 'more vert' element
+  if (event.target && event.target.classList.contains("inbox-todo-moreVert")) {
+    openMoreVert(event, API_URL_TODO, todos, displayTodos);
+  }
+});
+
+// Close sidebar
+closeSidebarButton.addEventListener("click", closeSidebarMenu);
+
+// Close/Cancel modal buttons
+cancelCreateTodoBtn.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll('.form-inputs-errors').forEach((element) => element.style.display = "none")
+    document.querySelectorAll('[data-id="createFormErrors"]').forEach((element) => element.innerHTML = "")
+    createTodoModal.close();
+    editTodoModal.close();
+    document.querySelectorAll(".create-modal").forEach((modal) => modal.style.display = "")
+  });
+})
+closeCreateModalBtn.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll('.form-inputs-errors').forEach((element) => element.style.display = "none")
+    document.querySelectorAll('[data-id="createFormErrors"]').forEach((element) => element.innerHTML = "")
+    createTodoModal.close();
+    editTodoModal.close();
+    document.querySelectorAll(".create-modal").forEach((modal) => modal.style.display = "")
+  });
+})
+
+// Form submission
+createTodoForm.forEach((form) => {
+  form.addEventListener("submit", (event) => {
+
+    event.preventDefault();
+
+    if (createTodoInputValidation(form).isValid) {
+
+      document.querySelectorAll('.form-inputs-errors').forEach((element) => element.style.display = "none")
+      document.querySelectorAll('[data-id="createFormErrors"]').forEach((element) => element.innerHTML = "")
+
+      if (form.parentElement.parentElement.dataset.id == "createModal") {
+
+        createTodo(API_URL_TODO, todos, displayTodos);
+
+      } else if (form.parentElement.parentElement.dataset.id == "editModal") {
+
+        const todoId = form.parentElement.parentElement.dataset.todoId
+        updateTodo(API_URL_TODO, todos, displayTodos, todoId);
+
+      }
+    } else {
+
+      document.querySelectorAll('.form-inputs-errors').forEach(element => element.style.display = "block");
+      const createFormErrorsElement = document.querySelectorAll('[data-id="createFormErrors"]')
+
+      createTodoInputValidation(form).errors.map((err) => {
+        createFormErrorsElement.forEach(element => {
+          const errElement = document.createElement('li'); // Create a new <li> for each parent
+          errElement.textContent = err;
+          console.log(element);
+          element.appendChild(errElement);
+        });
+      });
+    }
+  });
+})
+
+// Log out button
 if (logOutButton) {
-  logOutButton.addEventListener('click', logOut)
+  logOutButton.addEventListener("click", logOut);
 }
 
-fetchTodos(API_URL_TODO)
+// Fetch todos
+fetchTodos(API_URL_TODO, todos, displayTodos);
 
 
 # --- FILE: C:\Users\zrdar\Documents\todo-app\public\js\utils.js ---
@@ -306,8 +465,6 @@ export async function redirectIfLoggedIn(redirectUrl = "/dashboard.html") {
 
     if (response.ok) {
       window.location.href = redirectUrl;
-    } else {
-      console.log("response not ok");
     }
   } catch (error) {
     console.log("No authentication, can stay on this page");
@@ -315,20 +472,18 @@ export async function redirectIfLoggedIn(redirectUrl = "/dashboard.html") {
 }
 
 export async function redirectIfNotLoggedIn(redirectUrl = "/login.html") {
-    try {
-      const response = await fetch(API_URL_ME, {
-        credentials: "include",
-      });
-  
-      if (!response.ok) {
-        window.location.href = redirectUrl;
-      } else {
-        console.log("response ok");
-      }
-    } catch (error) {
-      console.log("No authentication, cannot stay on this page");
+  try {
+    const response = await fetch(API_URL_ME, {
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      window.location.href = redirectUrl;
     }
+  } catch (error) {
+    console.log("No authentication, cannot stay on this page");
   }
+}
 
 export async function logOut() {
   try {
@@ -344,6 +499,97 @@ export async function logOut() {
   } catch (error) {
     console.log("No authentication, can stay on this page");
   }
+}
+
+export function createTodoInputValidation(modalElement) {
+
+  let isCompleteFormValid = true;
+
+  let title
+  let description
+  let dueDate
+
+  console.log(modalElement.parentElement.parentElement.dataset.id)
+  if (modalElement.parentElement.parentElement.dataset.id == "createModal") {
+    title = modalElement.querySelector('[data-id="createModalTitle"]').value;
+    description = modalElement.querySelector('[data-id="createModalDescription"]').value;
+    dueDate = modalElement.querySelector('[data-id="createModalDueDate"]').value;
+  } else  if (modalElement.parentElement.parentElement.dataset.id == "editModal") {
+    title = modalElement.querySelector('[data-id="editModalTitle"]').value;
+    description = modalElement.querySelector('[data-id="editModalDescription"]').value;
+    dueDate = modalElement.querySelector('[data-id="editModalDueDate"]').value;
+  }
+
+  console.log(title, description, dueDate)
+
+  const isTitleValid = titleValidation(title);
+  const isDescriptionValid = descriptionValidation(description);
+  const isDueDateValid = dueDateValidation(dueDate);
+
+  let allErrors = []
+
+  if (
+    isTitleValid.isValid == false ||
+    isDescriptionValid.isValid == false ||
+    isDueDateValid.isValid == false
+  ) {
+    isCompleteFormValid = false;
+    allErrors = [
+      isTitleValid.message, isDescriptionValid.message, isDueDateValid.message
+    ]
+    allErrors = allErrors.filter(str => str.trim() !== "");
+  }
+
+  return {
+    isValid: isCompleteFormValid,
+    fields: {
+      title: {
+        isValid: isTitleValid.isValid,
+        message: isTitleValid.message,
+      },
+      description: {
+        isValid: isDescriptionValid.isValid,
+        message: isDescriptionValid.message,
+      },
+      dueDate: {
+        isValid: isDueDateValid.isValid,
+        message: isDueDateValid.message,
+      },
+    },
+    errors: allErrors,
+  };
+}
+
+function titleValidation(titleInput) {
+  const title = titleInput.trim();
+  if (title == "") return { isValid: false, message: "A title is required." };
+  if (title.split("").length < 3 || title.split("").length > 100)
+    return {
+      isValid: false,
+      message: "The title's length should be between 3 and 100 characters.",
+    };
+  return { isValid: true, message: "" };
+}
+
+function descriptionValidation(descriptionInput) {
+  const description = descriptionInput.trim();
+  if (description.split("").length > 500)
+    return {
+      isValid: false,
+      message: "The description's length shouldn't exceed 500 characters.",
+    };
+  return { isValid: true, message: "" };
+}
+
+function dueDateValidation(dueDateInput) {
+  const regex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+  const date = new Date(dueDateInput)
+  const now = new Date()
+  if (dueDateInput == "") return { isValid: false, message: "A due date is required." };
+  if (!regex.test(dueDateInput)) return { isValid: false, message: "Incorrect format for due time" }
+  if (isNaN(date.getDate())) return { isValid: false, message: "Due time must be a valid time" }
+  if (date <= now) return { isValid: false, message: "Due time must be in the future." };
+  return { isValid: true, message: "" };
 }
 
 
@@ -435,12 +681,492 @@ registerForm.addEventListener('submit', async (event) => {
 })                                                                                                                                                              
 
 
+# --- FILE: C:\Users\zrdar\Documents\todo-app\public\js\todo\createTodo.js ---
+
+
+import { fetchTodos } from "./fetchTodos.js";
+
+export async function createTodo(API_URL_TODO, todos, displayTodos) {
+  try {
+    const titleInput = document.querySelector('[data-id="createModalTitle"]');
+    const descriptionInput = document.querySelector('[data-id="createModalDescription"]');
+    const dueDateInput = document.querySelector('[data-id="createModalDueDate"]');
+    
+    const todoBody = { 
+      title: titleInput.value, 
+      description: descriptionInput.value, 
+      dueDate: new Date(dueDateInput.value).toISOString() 
+    };
+
+    const response = await fetch(API_URL_TODO, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(todoBody),
+    });
+    
+    if (!response.ok) {
+      throw new Error("Failed to create todo");
+    }
+    
+    const result = await response.json();
+    console.log("Todo created:", result);
+    
+    document.querySelector('[data-id="createModalForm"]').reset();
+    document.querySelector('[data-id="createModal"]').close();
+    document.querySelector(".create-modal").style.display = "";
+    
+    fetchTodos(API_URL_TODO, todos, displayTodos);
+  } catch (error) {
+    console.error("Error creating todo:", error);
+    alert("Failed to create task. Please try again.");
+  }
+}
+
+
+# --- FILE: C:\Users\zrdar\Documents\todo-app\public\js\todo\deleteTodo.js ---
+
+
+import { fetchTodos } from "./fetchTodos.js";
+
+export async function deleteTodo(API_URL_TODO, todos, displayTodos, id) {
+  try {
+    const response = await fetch(`${API_URL_TODO}${id}`, {
+      method: "DELETE",
+      credentials: "include"
+    });
+    const result = await response.json();
+
+    console.log(result);
+
+    fetchTodos(API_URL_TODO, todos, displayTodos)
+  } catch (error) {
+    console.log("Error deleteting todo:", error);
+  }
+}
+
+
+# --- FILE: C:\Users\zrdar\Documents\todo-app\public\js\todo\displayTodos.js ---
+
+
+const ulList = document.querySelector(".ulList");
+import { toggleTodoCompletion } from "./toggleTodoCompletion.js";
+
+export async function displayTodos(API_URL_TODO, todos, displayTodos) {
+  ulList.innerHTML = "";
+  todos.forEach((todo) => {
+    const li = document.createElement("li");
+    const date = document.createElement("small");
+    const task = document.createElement("div");
+    const description = document.createElement("p");
+    const checkbox = document.createElement("input");
+    const customCheckbox = document.createElement("label");
+    const checkmark = document.createElement("span");
+    const todoDiv = document.createElement("div");
+    const moreVert = document.createElement("div");
+    const hr = document.createElement("hr");
+
+    checkbox.type = "checkbox";
+    checkbox.className = "task-checkbox";
+    checkbox.checked = todo.completed;
+    checkbox.addEventListener("change", () => toggleTodoCompletion(API_URL_TODO, todos, displayTodos, todo._id, !todo.completed));
+    customCheckbox.className = "custom-checkbox";
+    checkmark.className = "checkmark";
+    customCheckbox.appendChild(checkbox);
+    customCheckbox.appendChild(checkmark);
+    task.textContent = todo.title;
+    description.innerHTML = formatDescription(todo.description);
+    date.textContent = formatDueDate(todo.dueDate);
+    date.dataset.duedate = todo.dueDate.slice(0, 16);
+    moreVert.textContent = "more_vert";
+    moreVert.className = "inbox-todo-moreVert material-icons";
+    todoDiv.className = "inbox-todo-content";
+    li.dataset.id = todo._id;
+    todoDiv.addEventListener("click", () => {
+      const modal = document.querySelector('[data-id="editModal"]');
+      modal.style.display = "flex";
+      modal.dataset.todoId = todo._id
+      document.querySelector('[data-id="editModalTitle"]').value = li.querySelector(".inbox-todo-content > div").textContent;
+      document.querySelector('[data-id="editModalDescription"]').value = li.querySelector(".inbox-todo-content > p").textContent;
+      document.querySelector('[data-id="editModalDueDate"]').value = li.querySelector(".inbox-todo-content > small").dataset.duedate;
+      modal.showModal();
+    });
+
+    todoDiv.appendChild(task);
+    todoDiv.appendChild(description);
+    todoDiv.appendChild(date);
+    li.appendChild(customCheckbox);
+    li.appendChild(todoDiv);
+    li.appendChild(moreVert);
+    ulList.appendChild(li);
+    ulList.appendChild(hr);
+  });
+  const addNewTask = document.createElement("div");
+  addNewTask.innerHTML = `
+  <li data-id="addNewTaskButton" class="create-task-button" style="cursor:pointer;font-style: italic;align-items: center;">
+     <label class="create-task-button custom-checkbox">
+          <div style="width: 100%;height: 100%;" class="create-task-button add-new-task-icon material-icons">add_circle</div>
+      </label>
+      <div class="create-task-button inbox-todo-content">
+          <div class="create-task-button">Add new task</div>
+      </div>
+  </li>
+  <hr>
+  `;
+
+  ulList.appendChild(addNewTask);
+}
+
+function formatDueDate(todoDate) {
+  const date = new Date(todoDate);
+  let mins
+  if (date.getMinutes().toString().split("").length == 2) { mins = date.getMinutes() }
+  else if (date.getMinutes().toString().split("").length == 1) { mins = date.getMinutes() + "0"}
+  return `${date.getDate()}/${date.getMonth()+1}/${date.getFullYear()} at ${date.getHours()}:${mins}`;
+}
+
+function formatDescription(todoDescription) {
+  const rawHTML = todoDescription.replace(/\n/g, "<br>");
+  return DOMPurify.sanitize(rawHTML, {
+    ALLOWED_TAGS: ['br'], // solo permitimos <br>
+    ALLOWED_ATTR: []      // ningún atributo permitido (así bloqueamos onerror, src, etc.)
+  });
+}
+
+
 # --- FILE: C:\Users\zrdar\Documents\todo-app\public\js\todo\fetchTodos.js ---
 
 
-export async function fetchTodos(API_URL_TODO) {
+export async function fetchTodos(API_URL_TODO, todos, displayTodos) {
+try {
+    let response = await fetch(API_URL_TODO, {
+        method: 'GET',
+        credentials: 'include'
+    })
 
+    const result = await response.json();
+    todos.length = 0
+    todos.push(...result)
+    console.log(todos)
+    displayTodos(API_URL_TODO, todos, displayTodos)
+
+} catch (error) {
+    console.log("Error fetching todos:", error)
 }
+}
+
+
+# --- FILE: C:\Users\zrdar\Documents\todo-app\public\js\todo\openMoreVert.js ---
+
+
+import { deleteTodo } from "./deleteTodo.js";
+import { toggleTodoCompletion } from "./toggleTodoCompletion.js";
+
+export function openMoreVert(event, API_URL_TODO, todos, displayTodos) {
+  const clickedElement = event.target.parentElement;
+  const rect = clickedElement.getBoundingClientRect();
+
+  const menu = document.createElement("div");
+  menu.classList = "moreVert-menu";
+  if (rect.bottom > window.innerHeight - 150) {
+    menu.style.top = `${rect.bottom - 180}px`;
+  } else {
+    menu.style.top = `${rect.bottom}px`;
+  }
+
+  const menuItems = [
+    { text: "Edit", icon: "edit", action: "edit" },
+    { text: "Delete", icon: "delete", action: "delete" },
+    { text: "Mark as completed", icon: "check_circle", action: "complete" },
+  ];
+
+  menuItems.forEach((item) => {
+    const menuItem = document.createElement("div");
+    const menuItemIcon = document.createElement("div");
+    const menuItemText = document.createElement("span");
+
+    menuItem.classList = "moreVert-menu-item";
+    menuItemIcon.classList = "moreVert-menu-item-icon material-icons";
+    menuItemText.classList = "moreVert-menu-item-text";
+
+    menuItemIcon.textContent = item.icon;
+    menuItemText.textContent = item.text;
+
+    menuItem.appendChild(menuItemIcon);
+    menuItem.appendChild(menuItemText);
+
+    menuItem.addEventListener("click", () => {
+      handleMenuAction(
+        item.action,
+        clickedElement,
+        API_URL_TODO,
+        todos,
+        displayTodos
+      );
+      closeAllMenus();
+    });
+
+    menu.appendChild(menuItem);
+  });
+
+  const inboxElement = document.querySelector(".inbox");
+
+  // Store the current scroll position
+  inboxElement._scrollTop = inboxElement.scrollTop;
+
+  // Make the content unscrollable but keep the scrollbar visible
+  inboxElement.style.pointerEvents = "none";
+
+  // Add a wheel event listener to prevent scrolling
+  document.addEventListener("wheel", preventScroll, { passive: false });
+
+  document.addEventListener("click", closeMenuOnOutsideClick);
+
+  document.body.appendChild(menu);
+}
+
+// Function to prevent scrolling
+function preventScroll(e) {
+  e.preventDefault();
+}
+
+function closeAllMenus() {
+  const menus = document.querySelectorAll(".moreVert-menu");
+  menus.forEach((menu) => {
+    document.removeEventListener("click", closeMenuOnOutsideClick);
+    menu.remove();
+  });
+
+  // Re-enable scrolling on the inbox element
+  const inboxElement = document.querySelector(".inbox");
+  inboxElement.style.pointerEvents = "";
+
+  // Remove the wheel event listener
+  document.removeEventListener("wheel", preventScroll);
+}
+
+function closeMenuOnOutsideClick(event) {
+  const menus = document.querySelectorAll(".moreVert-menu");
+  if (menus.length > 0) {
+    let clickedInsideMenu = false;
+    menus.forEach((menu) => {
+      if (menu.contains(event.target)) {
+        clickedInsideMenu = true;
+      }
+    });
+    if (
+      !clickedInsideMenu &&
+      !event.target.classList.contains(".inbox-todo-moreVert")
+    ) {
+      closeAllMenus();
+    }
+  }
+}
+
+function handleMenuAction(
+  action,
+  todoElement,
+  API_URL_TODO,
+  todos,
+  displayTodos
+) {
+  if (!todoElement) return;
+
+  const todoId = todoElement.dataset.id;
+
+  switch (action) {
+    case "edit":
+      const modal = document.querySelector('[data-id="editModal"]');
+      modal.style.display = "flex";
+      modal.dataset.todoId = todoId
+      document.querySelector('[data-id="editModalTitle"]').value = todoElement.querySelector(".inbox-todo-content > div").textContent;
+      document.querySelector('[data-id="editModalDescription"]').value = todoElement.querySelector(".inbox-todo-content > p").textContent;
+      document.querySelector('[data-id="editModalDueDate"]').value = todoElement.querySelector(".inbox-todo-content > small").dataset.duedate;
+      modal.showModal();
+      break;
+    case "delete":
+      deleteTodo(API_URL_TODO, todos, displayTodos, todoId);
+      break;
+    case "complete":
+      const isComplete = !todoElement.querySelector('input').checked
+      toggleTodoCompletion(API_URL_TODO, todos, displayTodos, todoId, isComplete)
+      break;
+  }
+}
+
+
+# --- FILE: C:\Users\zrdar\Documents\todo-app\public\js\todo\sidebarFunctions.js ---
+
+
+const sidebar = document.querySelector(".sidebar");
+const modalSidebar = document.querySelector(".create-modal-side");
+const openSidebarButton = document.getElementById("openSidebarButton");
+export function closeSidebar() {
+  sidebar.style.position = "absolute";
+  sidebar.style.left = "-250px";
+  openSidebarButton.style.display = "unset";
+  document.getElementById("overlay").style.display = "none";
+}
+
+export function openSidebar() {
+  if (window.innerWidth < 800) {
+    sidebar.style.position = "fixed";
+    document.getElementById("overlay").style.display = "block";
+
+    const inboxElement = document.querySelector(".inbox");
+
+    // Store the current scroll position
+    inboxElement._scrollTop = inboxElement.scrollTop;
+  
+    // Make the content unscrollable but keep the scrollbar visible
+    inboxElement.style.pointerEvents = "none";
+  
+    // Add a wheel event listener to prevent scrolling
+    document.addEventListener("wheel", preventScroll, { passive: false });
+    document.addEventListener("click", closeMenuOnOutsideClick);
+  } else {
+    sidebar.style.position = "unset";
+  }
+  sidebar.style.left = "unset";
+  openSidebarButton.style.display = "none";
+
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > "800" && sidebar.style.position == "fixed") {
+      sidebar.style.position = "unset";
+      document.getElementById("overlay").style.display = "none";
+    } else if (window.innerWidth < "800" && sidebar.style.position == "unset") {
+      sidebar.style.position = "fixed";
+      document.getElementById("overlay").style.display = "block";
+    }
+  });
+}
+
+// Function to prevent scrolling
+function preventScroll(e) {
+  e.preventDefault();
+}
+
+export function closeSidebarMenu() {
+  document.removeEventListener("click", closeMenuOnOutsideClick);
+
+  // Re-enable scrolling on the inbox element
+  const inboxElement = document.querySelector(".inbox");
+  inboxElement.style.pointerEvents = "";
+
+  // Remove the wheel event listener
+  document.removeEventListener("wheel", preventScroll);
+
+  closeSidebar();
+}
+
+function closeMenuOnOutsideClick(event) {
+  let clickedInsideMenu = false;
+  if (sidebar.contains(event.target)) {
+    clickedInsideMenu = true;
+  }
+  if (!clickedInsideMenu && !event.target.classList.contains(".sidebar")) {
+    closeSidebarMenu();
+  }
+}
+
+
+# --- FILE: C:\Users\zrdar\Documents\todo-app\public\js\todo\toggleTodoCompletion.js ---
+
+
+import { fetchTodos } from "./fetchTodos.js";
+
+export async function toggleTodoCompletion(
+  API_URL_TODO,
+  todos,
+  displayTodos,
+  id,
+  isComplete
+) {
+  try {
+    // Find the checkbox element for this specific todo
+    const todoElement = document.querySelector(`li[data-id="${id}"]`);
+    const checkbox = todoElement.querySelector('input[type="checkbox"]');
+    
+    // Update the checkbox state
+    checkbox.checked = isComplete;
+
+    const response = await fetch(`${API_URL_TODO}${id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({ completed: isComplete }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to toggle todo completion");
+    }
+
+    const result = await response.json();
+    console.log("Todo toggled:", result);
+
+    // Only refresh todos after a short delay to allow the animation to complete
+    setTimeout(() => {
+        fetchTodos(API_URL_TODO, todos, displayTodos);
+      }, 300); // Delay should be slightly longer than the animation duration
+  } catch (error) {
+    console.error("Error toggling todo:", error);
+    alert("Failed to toggle task completion. Please try again.");
+
+    // In case of error, revert the local state
+    const todoIndex = todos.findIndex(todo => todo._id === id);
+    if (todoIndex !== -1) {
+      todos[todoIndex].completed = !isComplete;
+      displayTodos(API_URL_TODO, todos, displayTodos);
+    }
+  }
+}
+
+
+# --- FILE: C:\Users\zrdar\Documents\todo-app\public\js\todo\updateTodo.js ---
+
+
+import { fetchTodos } from "./fetchTodos.js";
+
+export async function updateTodo(API_URL_TODO, todos, displayTodos, id) {
+    try {
+      const titleInput = document.querySelector('[data-id="editModalTitle"]');
+      const descriptionInput = document.querySelector('[data-id="editModalDescription"]');
+      const dueDateInput = document.querySelector('[data-id="editModalDueDate"]');
+
+      const updatedData = { 
+        title: titleInput.value, 
+        description: descriptionInput.value, 
+        dueDate: new Date(dueDateInput.value).toISOString() 
+      };
+
+      const response = await fetch(`${API_URL_TODO}${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        credentials: "include",
+        body: JSON.stringify(updatedData)
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to edit todo");
+      }
+      
+      const result = await response.json();
+      console.log("Todo edited:", result);
+      
+      document.querySelectorAll('[data-id="createModalForm"]').forEach(form => form.reset());
+      document.querySelector('[data-id="editModal"]').close();
+      document.querySelector('[data-id="editModal"]').style.display = "";
+      
+      fetchTodos(API_URL_TODO, todos, displayTodos);
+    } catch (error) {
+      console.error("Error editing todo:", error);
+      alert("Failed to edit task. Please try again.");
+    }
+  }
 
 
 # --- FILE: C:\Users\zrdar\Documents\todo-app\routes\authRoutes.js ---
@@ -484,12 +1210,12 @@ const router = express.Router()
 const { getTodos, createTodo, getTodo, updateTodo, deleteTodo } = require('../controllers/todoController')
 const { authMiddleware } = require('../middleware/authMiddleware')
 
-// router.use(authMiddleware)
+router.use(authMiddleware)
 router.get('/', getTodos)
-// router.post('/', createTodo)
+router.post('/', createTodo)
 // router.get('/:id', getTodo)
-// router.put('/:id', updateTodo)
-// router.delete('/:id', deleteTodo)
+router.put('/:id', updateTodo)
+router.delete('/:id', deleteTodo)
 
 module.exports = router
 
@@ -499,20 +1225,160 @@ module.exports = router
 
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
-    <link rel="stylesheet" href="styles/main.css">
-</head>
-<body>
-    <h1>DASHBOARD</h1>
-    <ul class="ulList">
 
-    </ul>
-    <button id="logOutButton">Log Out</button>
-    <script type="module" src="js/main.js"></script>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Document</title>
+  <link rel="stylesheet" href="styles/main.css" />
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+</head>
+
+<body>
+  <div id="overlay" style="display: none;"></div>
+  <main>
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-header-button">
+          <img class="sidebar-header-profile" src="img/profileIcon.jpg" width="25px" />
+          <span class="sidebar-header-name">Abubakr</span>
+          <div class="sidebar-header-icon material-icons">
+            keyboard_arrow_down
+          </div>
+        </div>
+        <div class="sidebar-header-icons">
+          <div class="sidebar-header-icon material-icons">notifications</div>
+          <div class="sidebar-header-icon material-icons" id="closeSidebarButton">
+            menu
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-container">
+        <div style="cursor: pointer;" class="create-task-button sidebar-container-button">
+          <div class="create-task-button sidebar-container-icon material-icons">
+            add_circle
+          </div>
+          <span class="create-task-button">Create task</span>
+        </div>
+        <a href="" class="sidebar-container-button">
+          <div class="sidebar-container-icon material-icons">circle</div>
+          <span>Button</span>
+        </a>
+        <a href="" class="sidebar-container-button">
+          <div class="sidebar-container-icon material-icons">circle</div>
+          <span>Button</span>
+        </a>
+        <a href="" class="sidebar-container-button">
+          <div class="sidebar-container-icon material-icons">circle</div>
+          <span>Button</span>
+        </a>
+        <a href="" class="sidebar-container-button">
+          <div class="sidebar-container-icon material-icons">circle</div>
+          <span>Button</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="inbox">
+      <div class="inbox-header">
+        <div class="sidebar-header-icon material-icons" id="openSidebarButton">
+          menu
+        </div>
+      </div>
+      <div class="inbox-main">
+        <h2>Inbox</h2>
+        <div class="inbox-todos">
+          <ul class="ulList"></ul>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <dialog class="create-modal" data-id="createModal">
+    <div class="create-modal-side"></div>
+    <div class="create-modal-main">
+      <div class="create-modal-header">
+        <div>Create new task</div>
+        <div class="material-icons" data-id="createModalClose">close</div>
+      </div>
+      <form class="create-modal-form" data-id="createModalForm">
+        <div class="form-inputs-errors create-modal-form-group">
+          <div class="material-icons">warning</div>
+          <ul data-id="createFormErrors"></ul>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="title">Title</label>
+          <input type="text" name="title" data-id="createModalTitle" required minlength="3" maxlength="100">
+          <hr>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="description">Description</label>
+          <textarea name="description" data-id="createModalDescription" maxlength="500" oninput="autoResize(this)"></textarea>
+          <hr>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="duedate">Due Date</label>
+          <input type="datetime-local" name="duedate" data-id="createModalDueDate">
+          <hr>
+        </div>
+        <div class="create-modal-form-buttons">
+          <button class="create-modal-form-cancel-button" type="button">Cancel</button>
+          <button class="create-modal-form-submit-button" type="submit">Create</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog class="create-modal" data-id="editModal">
+    <div class="create-modal-side"></div>
+    <div class="create-modal-main">
+      <div class="create-modal-header">
+        <div>Edit task</div>
+        <div class="material-icons" data-id="createModalClose">close</div>
+      </div>
+      <form class="create-modal-form" data-id="createModalForm">
+        <div class="form-inputs-errors create-modal-form-group">
+          <div class="material-icons">warning</div>
+          <ul data-id="createFormErrors"></ul>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="title">Title</label>
+          <input type="text" name="title" data-id="editModalTitle" required minlength="3" maxlength="100">
+          <hr>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="description">Description</label>
+          <textarea name="description" data-id="editModalDescription" maxlength="500" oninput="autoResize(this)"></textarea>
+          <hr>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="duedate">Due Date</label>
+          <input type="datetime-local" name="duedate" data-id="editModalDueDate">
+          <hr>
+        </div>
+        <div class="create-modal-form-buttons">
+          <button class="create-modal-form-cancel-button" type="button">Cancel</button>
+          <button class="create-modal-form-submit-button" type="submit">Submit</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <script>
+    function autoResize(el) {
+      el.style.height = 'auto';
+      el.style.height = (el.scrollHeight) + 'px';
+    }
+    </script>
+
+  <div class="create-task-button create-task-button-fixed sidebar-container-icon material-icons">
+    add_circle
+  </div>
+  <script type="module" src="js/main.js"></script>
 </body>
+
 </html>
 
 
@@ -521,17 +1387,15 @@ module.exports = router
 
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Document</title>
-    <link rel="stylesheet" href="styles/main.css">
-</head>
-<body>
-    <h1>INDEX</h1>
-    <button type="submit" id="logOutButton">Log out</button>
-
-</body>
+    <link rel="stylesheet" href="styles/main.css" />
+  </head>
+  <body>
+    <h1>INDEX AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</h1>
+  </body>
 </html>
 
 
@@ -609,3 +1473,358 @@ module.exports = router
 # --- FILE: C:\Users\zrdar\Documents\todo-app\public\styles\main.css ---
 
 
+@font-face {
+  font-family: "Lato";
+  src: url(../fonts/Lato/Lato-Regular.ttf);
+}
+
+@font-face {
+  font-family: "Lato BoldItalic";
+  src: url(../fonts/Lato/Lato-BoldItalic.ttf);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: "Lato";
+}
+
+:root {
+  --primary-color: #3498db;
+  --spacing-md: 16px;
+}
+
+body {
+  overflow-y: hidden;
+  height: 100vh;
+}
+
+#overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5); /* fondo oscuro */
+  z-index: 999; /* por encima del contenido pero debajo del sidebar si es necesario */
+}
+
+dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+}
+
+small {
+  color: rgb(31, 31, 31);
+  font-size: 0.7em;
+}
+
+main {
+  display: flex;
+}
+
+.material-icons {
+  cursor: pointer;
+  -webkit-user-select: none; /* Chrome, Safari */
+  -moz-user-select: none; /* Firefox */
+  -ms-user-select: none; /* Internet Explorer/Edge */
+  user-select: none; /* Standard */
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  min-width: 250px;
+  height: 100vh;
+  background-color: antiquewhite;
+  position: unset;
+  z-index: 1000;
+}
+
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 30px;
+  align-items: center;
+}
+
+.sidebar-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-header-button {
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-header-icon {
+  max-width: 24px;
+  margin: 5px;
+}
+
+#openSidebarButton {
+  display: none;
+  color: black;
+}
+
+.sidebar-container-icon {
+  max-width: 24px;
+  margin: 5px;
+}
+
+.sidebar-header-profile {
+  margin: 10px;
+  border-radius: 50px;
+}
+
+.sidebar-container-button {
+  display: flex;
+  text-decoration: none;
+  align-items: center;
+  margin-bottom: 5px;
+  flex-grow: 1;
+  color: black;
+}
+
+.sidebar-container-button:hover {
+  background-color: grey;
+}
+
+.inbox {
+  overflow-y: auto;
+  height: 100vh;
+  padding: 20px;
+  display: flex;
+  flex-grow: 1;
+  flex-direction: column;
+}
+
+.inbox-header {
+  min-height: 50px;
+  height: 50px;
+}
+
+.inbox-main,
+.inbox-header {
+  max-width: 95%;
+  align-self: center;
+  width: 100%;
+}
+
+.inbox h2 {
+  margin-bottom: 20px;
+}
+
+.ulList {
+  list-style-type: none;
+}
+
+.ulList li {
+  margin-bottom: 15px;
+  display: flex;
+}
+
+.ulList hr,
+.create-modal-form-group hr {
+  margin-bottom: 15px;
+}
+
+.custom-checkbox {
+  width: 25px;
+  min-width: 25px;
+  height: 25px;
+  cursor: pointer;
+  margin-right: 15px;
+}
+
+.custom-checkbox .checkmark {
+  width: 100%;
+  height: 100%;
+  border: 2px solid #222;
+  display: inline-block;
+  border-radius: 3px;
+  background: #222 url(../img/White_check.svg.png) center/1250% no-repeat;
+  transition: background-size 0.2s ease;
+}
+
+.custom-checkbox input:checked + .checkmark {
+  background-size: 60%;
+  transition: background-size 0.25s cubic-bezier(0.07, 0, 0.18, 1.24);
+}
+.custom-checkbox input {
+  display: none;
+}
+
+.inbox-todo-moreVert {
+  width: 25px;
+  min-width: 25px;
+  height: 25px;
+  cursor: pointer;
+  margin-left: 15px;
+}
+
+.inbox-todo-content {
+  flex-grow: 1;
+  word-break: break-word;
+  cursor: pointer;
+}
+
+.moreVert-menu {
+  position: absolute;
+  border: solid;
+  background-color: antiquewhite;
+  right: 30px;
+  border-radius: 10px;
+}
+
+.moreVert-menu > * + * {
+  border-top: solid grey;
+}
+
+.moreVert-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 10px;
+  width: 250px;
+  cursor: pointer;
+}
+
+.moreVert-menu-item:hover {
+  background-color: rgb(229, 212, 191);
+}
+
+.moreVert-menu-item-icon {
+  margin-right: 15px;
+}
+
+.create-task-button-fixed {
+  position: fixed;
+  bottom: 20px;
+  right: 50px;
+  font-size: 50px !important;
+  display: none !important;
+}
+
+.create-modal:-internal-dialog-in-top-layer {
+  max-width: unset !important;
+  max-height: unset !important;
+}
+
+.create-modal {
+  width: unset !important;
+  height: unset !important;
+  border: none;
+  background-color: transparent;
+}
+
+.create-modal-side {
+  padding: 10px;
+  min-width: 250px;
+  height: 100vh;
+}
+
+.create-modal-main {
+  height: 100vh;
+  padding: 20px;
+  display: flex;
+  flex-grow: 1;
+  flex-direction: column;
+  background-color: white;
+  /* background-color: rgba(255, 255, 255, 0.288)!important; */
+}
+
+.create-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 50px;
+  font-weight: bold;
+}
+
+.create-modal-header,
+.create-modal-form {
+  max-width: 95%;
+  align-self: center;
+  width: 100%;
+}
+
+.create-modal-form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.create-modal-form-group input,
+.create-modal-form-group textarea,
+.create-modal-form-group input[type="datetime-local"] {
+  padding: 10px;
+  resize: none;
+  border: none;
+  user-select: none;
+  text-decoration: none;
+  overflow: hidden;
+  line-height: 1.5;
+  width: 100%;
+  background-color: transparent;
+}
+
+.create-modal-form-group textarea {
+  height: 36px;
+  max-height: 100px;
+}
+
+.create-modal-form-group input:focus,
+.create-modal-form-group textarea:focus {
+  outline: none;
+}
+
+.create-modal-form-group label {
+  margin-bottom: 10px;
+}
+
+.create-modal-form-buttons {
+  display: flex;
+  justify-content: space-around;
+  margin: 15px 0;
+}
+
+.create-modal-form-buttons button {
+  padding: 15px 50px;
+  border-radius: 15px;
+  border: none;
+  background-color: black;
+  color: white;
+}
+
+.create-modal-form-submit-button {
+  background-color: brown !important;
+}
+
+@media (max-width: 800px) {
+  .sidebar,
+  .create-modal-side {
+    position: absolute;
+    left: -250px;
+  }
+
+  #openSidebarButton {
+    display: unset;
+  }
+
+  .create-task-button-fixed {
+    display: inline-block !important;
+  }
+}
+
+.form-inputs-errors {
+  display: none;
+  color: red;
+  margin-bottom: 20px;
+  font-style: italic;
+  background-color: cornsilk;
+  padding: 15px;
+  list-style: inside;
+}

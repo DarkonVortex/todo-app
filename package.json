@@ -4,7 +4,7 @@
   "description": "A to-do list web app using Node.js and MongoDB.",
   "main": "server.js",
   "scripts": {
-    "test": "standard && nodemon server.js"
+    "test": "nodemon server.js"
   },
   "author": "",
   "license": "ISC",
@@ -12,6 +12,7 @@
     "bcryptjs": "^3.0.2",
     "body-parser": "^2.2.0",
     "cookie-parser": "^1.4.7",
+    "dompurify": "^3.2.5",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",

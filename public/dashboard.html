@@ -1,17 +1,157 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
-    <link rel="stylesheet" href="styles/main.css">
-</head>
-<body>
-    <h1>DASHBOARD</h1>
-    <ul class="ulList">
 
-    </ul>
-    <button id="logOutButton">Log Out</button>
-    <script type="module" src="js/main.js"></script>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Document</title>
+  <link rel="stylesheet" href="styles/main.css" />
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+</head>
+
+<body>
+  <div id="overlay" style="display: none;"></div>
+  <main>
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-header-button">
+          <img class="sidebar-header-profile" src="img/profileIcon.jpg" width="25px" />
+          <span class="sidebar-header-name">Abubakr</span>
+          <div class="sidebar-header-icon material-icons">
+            keyboard_arrow_down
+          </div>
+        </div>
+        <div class="sidebar-header-icons">
+          <div class="sidebar-header-icon material-icons">notifications</div>
+          <div class="sidebar-header-icon material-icons" id="closeSidebarButton">
+            menu
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-container">
+        <div style="cursor: pointer;" class="create-task-button sidebar-container-button">
+          <div class="create-task-button sidebar-container-icon material-icons">
+            add_circle
+          </div>
+          <span class="create-task-button">Create task</span>
+        </div>
+        <a href="" class="sidebar-container-button">
+          <div class="sidebar-container-icon material-icons">circle</div>
+          <span>Button</span>
+        </a>
+        <a href="" class="sidebar-container-button">
+          <div class="sidebar-container-icon material-icons">circle</div>
+          <span>Button</span>
+        </a>
+        <a href="" class="sidebar-container-button">
+          <div class="sidebar-container-icon material-icons">circle</div>
+          <span>Button</span>
+        </a>
+        <a href="" class="sidebar-container-button">
+          <div class="sidebar-container-icon material-icons">circle</div>
+          <span>Button</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="inbox">
+      <div class="inbox-header">
+        <div class="sidebar-header-icon material-icons" id="openSidebarButton">
+          menu
+        </div>
+      </div>
+      <div class="inbox-main">
+        <h2>Inbox</h2>
+        <div class="inbox-todos">
+          <ul class="ulList"></ul>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <dialog class="create-modal" data-id="createModal">
+    <div class="create-modal-side"></div>
+    <div class="create-modal-main">
+      <div class="create-modal-header">
+        <div>Create new task</div>
+        <div class="material-icons" data-id="createModalClose">close</div>
+      </div>
+      <form class="create-modal-form" data-id="createModalForm">
+        <div class="form-inputs-errors create-modal-form-group">
+          <div class="material-icons">warning</div>
+          <ul data-id="createFormErrors"></ul>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="title">Title</label>
+          <input type="text" name="title" data-id="createModalTitle" required minlength="3" maxlength="100">
+          <hr>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="description">Description</label>
+          <textarea name="description" data-id="createModalDescription" maxlength="500" oninput="autoResize(this)"></textarea>
+          <hr>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="duedate">Due Date</label>
+          <input type="datetime-local" name="duedate" data-id="createModalDueDate">
+          <hr>
+        </div>
+        <div class="create-modal-form-buttons">
+          <button class="create-modal-form-cancel-button" type="button">Cancel</button>
+          <button class="create-modal-form-submit-button" type="submit">Create</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog class="create-modal" data-id="editModal">
+    <div class="create-modal-side"></div>
+    <div class="create-modal-main">
+      <div class="create-modal-header">
+        <div>Edit task</div>
+        <div class="material-icons" data-id="createModalClose">close</div>
+      </div>
+      <form class="create-modal-form" data-id="createModalForm">
+        <div class="form-inputs-errors create-modal-form-group">
+          <div class="material-icons">warning</div>
+          <ul data-id="createFormErrors"></ul>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="title">Title</label>
+          <input type="text" name="title" data-id="editModalTitle" required minlength="3" maxlength="100">
+          <hr>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="description">Description</label>
+          <textarea name="description" data-id="editModalDescription" maxlength="500" oninput="autoResize(this)"></textarea>
+          <hr>
+        </div>
+        <div class="create-modal-form-group">
+          <label for="duedate">Due Date</label>
+          <input type="datetime-local" name="duedate" data-id="editModalDueDate">
+          <hr>
+        </div>
+        <div class="create-modal-form-buttons">
+          <button class="create-modal-form-cancel-button" type="button">Cancel</button>
+          <button class="create-modal-form-submit-button" type="submit">Submit</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <script>
+    function autoResize(el) {
+      el.style.height = 'auto';
+      el.style.height = (el.scrollHeight) + 'px';
+    }
+    </script>
+
+  <div class="create-task-button create-task-button-fixed sidebar-container-icon material-icons">
+    add_circle
+  </div>
+  <script type="module" src="js/main.js"></script>
 </body>
+
 </html>

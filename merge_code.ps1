@@ -6,7 +6,7 @@ if (Test-Path $OutputFile) {
 }
 
 # Extensiones de archivo a incluir
-# $Extensions = @("*.js")
+# $Extensions = @("*.html", "*.css")
 $Extensions = @("*.js", "*.html", "*.css", "*.php", "*.py", "*.cpp", "*.java", "*.ts")
 
 # Función para manejar archivos con error de permiso
